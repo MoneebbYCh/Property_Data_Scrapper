@@ -52,25 +52,34 @@ async def scrape_page(page, url):
             "Location": "",
             "Launch date": "",
             "Overview": "",
+            "Unit Prices": "",
         }
 
         # Name
         try:
-            name = await page.text_content(
-                "#w-node-_252af881-6ac8-1fe9-c411-e949de04b7da-12f38d96 > div.profile-header > div.proparties-info-block._1 > div.property-header-text-block > div.property-header-name-text"
+            await page.wait_for_selector(
+                "#w-node-_252af881-6ac8-1fe9-c411-e949de04b7da-12f38d96 div.property-header-name-text",
+                timeout=10000,
             )
-            data["Name"] = name.strip() if name else ""
+            name = await page.text_content(
+                "#w-node-_252af881-6ac8-1fe9-c411-e949de04b7da-12f38d96 div.property-header-name-text"
+            )
+            data["Name"] = name.strip() if name and "Loading" not in name else ""
         except:
-            pass
+            data["Name"] = ""
 
         # Location
         try:
-            location = await page.text_content(
-                "#w-node-_252af881-6ac8-1fe9-c411-e949de04b7da-12f38d96 > div.profile-header > div.proparties-info-block._1 > div.property-header-text-block > div.property-header-location.new"
+            await page.wait_for_selector(
+                "#w-node-_252af881-6ac8-1fe9-c411-e949de04b7da-12f38d96 div.property-header-location.new",
+                timeout=10000,
             )
-            data["Location"] = location.strip() if location else ""
+            location = await page.text_content(
+                "#w-node-_252af881-6ac8-1fe9-c411-e949de04b7da-12f38d96 div.property-header-location.new"
+            )
+            data["Location"] = location.strip() if location and "Loading" not in location else ""
         except:
-            pass
+            data["Location"] = ""
 
         # Launch Date
         try:
@@ -79,7 +88,7 @@ async def scrape_page(page, url):
             )
             data["Launch date"] = launch_date.strip() if launch_date else ""
         except:
-            pass
+            data["Launch date"] = ""
 
         # Overview (combine all text inside the block, filter Russian)
         try:
@@ -94,12 +103,88 @@ async def scrape_page(page, url):
                 ]
                 data["Overview"] = "\n".join(cleaned_texts)
         except:
+            data["Overview"] = ""
+
+        # Unit Prices (simplified selector)
+        try:
+            await page.wait_for_selector(
+                "#w-node-_24757de1-7ffc-051c-df3f-7ae59d75423e-12f38d96 div.project-info-test > div:nth-child(2) > h2",
+                timeout=10000,
+            )
+            price = await page.text_content(
+                "#w-node-_24757de1-7ffc-051c-df3f-7ae59d75423e-12f38d96 div.project-info-test > div:nth-child(2) > h2"
+            )
+            price_cleaned = price.strip() if price else ""
+            if "Loading" in price_cleaned or not price_cleaned:
+                data["Unit Prices"] = ""
+            else:
+                data["Unit Prices"] = f"Starting from: {price_cleaned}"
+        except:
+            data["Unit Prices"] = ""
+
+        # Developer
+        try:
+            developer = await page.text_content(
+                "#w-node-_252af881-6ac8-1fe9-c411-e949de04b7da-12f38d96 > div.profile-header > div.proparties-info-block._1 > div.back-company-agent-block > div > div"
+            )
+            data["Developer"] = developer.strip() if developer else ""
+        except:
             pass
+
+                # Detailed Pricing
+        try:
+            container = await page.query_selector(
+                "#w-node-_252af881-6ac8-1fe9-c411-e949de04b7da-12f38d96 > div.general-block.no-indentation > div.right-slider-section > div > div.typical-units-block"
+            )
+            if container:
+                cards = await container.query_selector_all("div.name_buildings_block")
+                detailed_pricing = []
+
+                for card in cards:
+                    try:
+                        unit_types = await card.query_selector_all(".unit-type")
+                        unit_type_text = " - ".join([
+                            await ut.text_content() for ut in unit_types if await ut.text_content()
+                        ])
+
+                        # Price
+                        price_box = await card.query_selector(".price-range-box")
+                        if price_box:
+                            prices = await price_box.query_selector_all(".unit-price")
+                            price_text = " — ".join([
+                                await p.text_content() for p in prices if await p.text_content()
+                            ])
+                        else:
+                            price_text = ""
+
+                        # Area (sqft)
+                        area_box = await card.query_selector(".unit-area-range-box")
+                        if area_box:
+                            areas = await area_box.query_selector_all(".unit-area")
+                            area_text = " — ".join([
+                                await a.text_content() for a in areas if await a.text_content()
+                            ])
+                        else:
+                            area_text = ""
+
+                        detailed_pricing.append({
+                            "Unit Type": unit_type_text,
+                            "Price (AED)": price_text,
+                            "Area (sqft)": area_text
+                        })
+                    except:
+                        continue
+
+                data["Detailed Pricing"] = detailed_pricing
+        except Exception as e:
+            print(f"⚠️ Error scraping detailed pricing: {e}")
+            data["Detailed Pricing"] = []
+
 
         return data
 
     except Exception as e:
-        print(f"Error scraping {url}: {e}")
+        print(f"❌ Error scraping {url}: {e}")
         return None
 
 
@@ -117,7 +202,7 @@ async def main():
         await perform_login(page)
 
         for i, url in enumerate(urls):
-            print(f"Scraping {i+1}/{len(urls)}: {url}")
+            print(f"🔍 Scraping {i+1}/{len(urls)}: {url}")
             data = await scrape_page(page, url)
             if data:
                 results.append(data)
